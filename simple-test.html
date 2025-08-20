@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Candlestick Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+</head>
+<body>
+    <h2>Тест: должны быть СИНИЕ и МОРКОВНЫЕ свечи</h2>
+    <div style="width: 600px; height: 300px;">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        console.log('Chart.js version:', Chart.version);
+        console.log('Available chart types:', Object.keys(Chart.registry.controllers.items));
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        
+        const data = [
+            { x: '2024-01-01', o: 10, h: 15, l: 8, c: 14 },   // растущая - должна быть СИНЯЯ
+            { x: '2024-01-02', o: 14, h: 16, l: 11, c: 12 },  // падающая - должна быть МОРКОВНАЯ
+        ];
+
+        try {
+            new Chart(ctx, {
+                type: 'candlestick',
+                data: {
+                    datasets: [{
+                        label: 'Test',
+                        data: data,
+                        color: {
+                            up: '#007bff',
+                            down: '#ff8c42'
+                        }
+                    }]
+                }
+            });
+            console.log('График создан успешно');
+        } catch (error) {
+            console.error('Ошибка создания графика:', error);
+            document.body.innerHTML += '<p style="color: red;">ОШИБКА: ' + error.message + '</p>';
+        }
+    </script>
+</body>
+</html> 
