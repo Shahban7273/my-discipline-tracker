@@ -59,8 +59,8 @@
                     <button id="addCategoryButton" class="layout-toggle-button" title="Добавить категорию">
                         <i class="fas fa-folder-plus"></i>
                     </button>
-                    <button id="layoutToggleButton" class="layout-toggle-button" title="Переключить вид">
-                        <i class="fas fa-grip"></i>
+                    <button id="openTasksButton" class="layout-toggle-button" title="Ежедневные задания">
+                        <i class="fas fa-tasks"></i>
                     </button>
                 </div>
             </div>
@@ -73,6 +73,48 @@
                 <p>Добавьте направление</p>
             </div>
         </section>
+
+        <!-- Секция ежедневных заданий (скрыта по умолчанию) -->
+        <section class="tasks-section" id="tasksSection" style="display: none;">
+            <div class="section-toolbar">
+                <h2 class="section-title"><i class="fas fa-calendar-week"></i> Ежедневные задания</h2>
+                <div class="section-actions">
+                    <label for="tasksPlacementSelect" style="color:#9ca3af; font-size:0.9rem; margin-right:6px;">Расположение:</label>
+                    <select id="tasksPlacementSelect" class="period-select" style="min-width:180px;">
+                        <option value="top">Вверху (после шапки)</option>
+                        <option value="bottom">Внизу (перед футером)</option>
+                        <option value="modal">Отдельное меню</option>
+                    </select>
+                </div>
+            </div>
+            <div id="tasksWeekGrid" class="tasks-week-grid">
+                <!-- Сетка из 7 дней будет отрисована скриптом -->
+            </div>
+        </section>
+
+
+        <!-- Modal: Ежедневные задания (вариант "отдельное меню") -->
+        <div id="tasksModal" class="modal-backdrop" style="display:none;">
+            <div class="modal">
+                <div class="modal-header" style="display:flex; align-items:center; gap:8px;">
+                    <h3 style="flex:1;">Ежедневные задания</h3>
+                    <label for="tasksPlacementSelectModal" style="color:#9ca3af; font-size:0.9rem;">Расположение:</label>
+                    <select id="tasksPlacementSelectModal" class="period-select" style="min-width:180px;">
+                        <option value="top">Вверху (после шапки)</option>
+                        <option value="bottom">Внизу (перед футером)</option>
+                        <option value="modal">Отдельное меню</option>
+                    </select>
+                    <button id="tasksModalResizeButton" class="modal-close" title="Развернуть/свернуть"><i class="fas fa-expand"></i></button>
+                    <button id="closeTasksModal" class="modal-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div id="tasksModalGrid" class="tasks-week-grid"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="closeTasksModalFooter" class="restore-button"><i class="fas fa-times"></i> Закрыть</button>
+                </div>
+            </div>
+        </div>
 
         <main class="main-content">
             <!-- Главный grid контейнер для графика и детальной панели -->
@@ -431,9 +473,10 @@
     </div>
 
     <!-- Firebase SDK (optional; требуется для входа и синхронизации) -->
+    <!-- Локальный конфиг (скопируйте firebase-config.example.js -> firebase-config.js и заполните) -->
+    <script src="firebase-config.js"></script>
     <script>
-        // Вставьте сюда конфиг Firebase, чтобы включить вход и синхронизацию:
-        // window.FIREBASE_CONFIG = { apiKey: "...", authDomain: "...", projectId: "...", ... };
+        // Фоллбек: если локальный файл не подключен, оставим отключенной синхронизацию
         window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
     </script>
     <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>

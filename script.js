@@ -11,6 +11,22 @@ class ProductivityTracker {
         this.currentUser = null;
         this.cloudSaveTimer = null;
         this.lastCloudSavedAt = null;
+        // Идентификатор экземпляра и флаги синхронизации
+        this.instanceId = (() => {
+            try {
+                const key = 'productivityInstanceId';
+                let id = localStorage.getItem(key);
+                if (!id) {
+                    id = Date.now() + '-' + Math.random().toString(36).slice(2,10);
+                    localStorage.setItem(key, id);
+                }
+                return id;
+            } catch (_) {
+                return Date.now() + '-' + Math.random().toString(36).slice(2,10);
+            }
+        })();
+        this.isApplyingRemote = false;
+        this.cloudUnsubscribe = null;
         
         // Новая система зума - управление временным диапазоном
         this.zoomState = {
@@ -41,6 +57,9 @@ class ProductivityTracker {
 
         // Режим отображения списка направлений: 'horizontal' | 'compact'
         this.layoutMode = this.loadLayoutMode();
+
+        // Ежедневные задания: локальное состояние
+        this.tasks = this.loadTasks();
         
         this.initializeElements();
         this.bindEvents();
@@ -54,6 +73,253 @@ class ProductivityTracker {
         // Хранилище для автообновления таймфреймов
         this.lastIntervalStartMs = null;
         this.frameScheduled = false;
+    }
+
+    // Возвращает ключ хранения, привязанный к текущему пользователю или 'guest'
+    getStorageKey(baseKey) {
+        const uid = (this.currentUser && this.currentUser.uid) ? this.currentUser.uid : 'guest';
+        return `${baseKey}:${uid}`;
+    }
+
+    // === Ежедневные задания: состояние и хранилище ===
+    loadTasks() {
+        try { return JSON.parse(localStorage.getItem(this.getStorageKey('productivityTasks')) || '{}'); } catch(_) { return {}; }
+    }
+    saveTasks() {
+        try { localStorage.setItem(this.getStorageKey('productivityTasks'), JSON.stringify(this.tasks)); } catch(_) {}
+    }
+
+    // Ключ дня недели (0-6): 0 - Пн, 6 - Вс; но JS getDay() даёт 0 - Вс
+    getWeekdayKeys() {
+        return ['mon','tue','wed','thu','fri','sat','sun'];
+    }
+    getWeekdayLabel(key) {
+        const map = { mon: 'Понедельник', tue: 'Вторник', wed: 'Среда', thu: 'Четверг', fri: 'Пятница', sat: 'Суббота', sun: 'Воскресенье' };
+        return map[key] || key;
+    }
+
+    toggleTasksSection() {
+        if (!this.tasksSection) return;
+        const visible = this.tasksSection.style.display !== 'none';
+        // Переключаем только видимость секции задач, не скрывая остальные разделы
+        const placement = this.getTasksPlacement();
+        if (placement === 'modal') {
+            this.renderTasksWeek(true);
+            this.showTasksModal();
+            return;
+        }
+        this.tasksSection.style.display = visible ? 'none' : 'block';
+        if (!visible) {
+            this.renderTasksWeek();
+            this.applyTasksPlacement();
+            try { this.tasksSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch(_) {}
+        }
+    }
+
+    // Структура тасков: { mon: [ { id, text, status: 'pending'|'done'|'failed' } ], ... }
+    ensureTasksWeek() {
+        const keys = this.getWeekdayKeys();
+        if (!this.tasks || typeof this.tasks !== 'object') this.tasks = {};
+        for (const k of keys) if (!Array.isArray(this.tasks[k])) this.tasks[k] = [];
+    }
+
+    addTask(dayKey, text) {
+        this.ensureTasksWeek();
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            this.showNotification('Введите текст задания', 'error');
+            return;
+        }
+        const task = { id: Date.now() + Math.random().toString(36).slice(2,8), text: trimmed, status: 'pending' };
+        this.tasks[dayKey].push(task);
+        this.saveTasks();
+        this.renderTasksWeek();
+    }
+
+    setTaskStatus(dayKey, taskId, status) {
+        this.ensureTasksWeek();
+        const list = this.tasks[dayKey] || [];
+        const item = list.find(t => t.id === taskId);
+        if (!item) return;
+        item.status = status; // 'done' | 'failed' | 'pending'
+        this.saveTasks();
+        this.renderTasksWeek();
+    }
+
+    deleteTask(dayKey, taskId) {
+        this.ensureTasksWeek();
+        this.tasks[dayKey] = (this.tasks[dayKey] || []).filter(t => t.id !== taskId);
+        this.saveTasks();
+        this.renderTasksWeek();
+    }
+
+    renderTasksWeek(toModal = false) {
+        const container = toModal ? this.tasksModalGrid : this.tasksWeekGrid;
+        if (!container) return;
+        this.ensureTasksWeek();
+        container.innerHTML = '';
+        const dayKeys = this.getWeekdayKeys();
+
+        dayKeys.forEach((key) => {
+            const dayCol = document.createElement('div');
+            dayCol.className = 'tasks-day';
+
+            const header = document.createElement('div');
+            header.className = 'tasks-day-header';
+            const title = document.createElement('div');
+            title.className = 'tasks-day-title';
+            title.textContent = this.getWeekdayLabel(key);
+            const addBtn = document.createElement('button');
+            addBtn.className = 'tasks-add-btn';
+            addBtn.innerHTML = '<i class="fas fa-plus"></i>';
+            addBtn.title = 'Добавить задание';
+            addBtn.addEventListener('click', () => {
+                const text = prompt(`Новое задание (${this.getWeekdayLabel(key)}):`);
+                if (text != null) this.addTask(key, text);
+            });
+            header.appendChild(title);
+            header.appendChild(addBtn);
+
+            const listEl = document.createElement('div');
+            listEl.className = 'tasks-list';
+            for (const t of this.tasks[key]) {
+                listEl.appendChild(this.renderTaskItem(key, t));
+            }
+
+            dayCol.appendChild(header);
+            dayCol.appendChild(listEl);
+            container.appendChild(dayCol);
+        });
+    }
+
+    renderTaskItem(dayKey, task) {
+        const item = document.createElement('div');
+        item.className = `task-item task-${task.status || 'pending'}`;
+
+        const text = document.createElement('div');
+        text.className = 'task-text';
+        text.textContent = task.text;
+
+        const actions = document.createElement('div');
+        actions.className = 'task-actions';
+
+        const doneBtn = document.createElement('button');
+        doneBtn.className = 'task-btn done';
+        doneBtn.title = 'Отметить как выполнено';
+        doneBtn.innerHTML = '<i class="fas fa-check"></i>';
+        doneBtn.addEventListener('click', () => this.setTaskStatus(dayKey, task.id, 'done'));
+
+        const failBtn = document.createElement('button');
+        failBtn.className = 'task-btn fail';
+        failBtn.title = 'Отметить как не выполнено';
+        failBtn.innerHTML = '<i class="fas fa-times"></i>';
+        failBtn.addEventListener('click', () => this.setTaskStatus(dayKey, task.id, 'failed'));
+
+        const pendingBtn = document.createElement('button');
+        pendingBtn.className = 'task-btn pending';
+        pendingBtn.title = 'Сбросить статус';
+        pendingBtn.innerHTML = '<i class="fas fa-undo"></i>';
+        pendingBtn.addEventListener('click', () => this.setTaskStatus(dayKey, task.id, 'pending'));
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'task-btn delete';
+        delBtn.title = 'Удалить';
+        delBtn.innerHTML = '<i class="fas fa-trash"></i>';
+        delBtn.addEventListener('click', () => this.deleteTask(dayKey, task.id));
+
+        actions.appendChild(doneBtn);
+        actions.appendChild(failBtn);
+        actions.appendChild(pendingBtn);
+        actions.appendChild(delBtn);
+
+        item.appendChild(text);
+        item.appendChild(actions);
+        return item;
+    }
+
+    applyTasksPlacement() {
+        if (!this.tasksSection) return;
+        const placement = this.getTasksPlacement();
+        // Перемещаем секцию задач в DOM
+        try {
+            const container = document.querySelector('.container');
+            if (!container) return;
+            // Удаляем и вставляем заново в нужное место
+            if (placement === 'top') {
+                // после шапки
+                const header = document.querySelector('.header');
+                if (header && header.nextSibling) {
+                    container.insertBefore(this.tasksSection, header.nextSibling);
+                }
+            } else if (placement === 'bottom') {
+                // перед футером
+                const footer = document.querySelector('.footer');
+                if (footer) {
+                    container.insertBefore(this.tasksSection, footer);
+                }
+            }
+        } catch(_) {}
+    }
+
+    onTasksPlacementChange() {
+        this.applyTasksPlacement();
+        const placement = this.getTasksPlacement();
+        if (placement === 'modal') {
+            // Скрываем секцию и открываем модалку
+            if (this.tasksSection) this.tasksSection.style.display = 'none';
+            this.showTasksModal();
+        }
+    }
+
+    getTasksPlacement() {
+        try {
+            const selectValue = this.tasksPlacementSelect ? this.tasksPlacementSelect.value : null;
+            const saved = localStorage.getItem(this.getStorageKey('productivityTasksPlacement'));
+            return selectValue || saved || 'top';
+        } catch(_) { return 'top'; }
+    }
+
+    // (Недавние направления удалены по запросу)
+
+    showTasksModal() {
+        if (!this.tasksModal) return;
+        this.renderTasksWeek(true);
+        this.tasksModal.style.display = 'flex';
+        if (this.tasksPlacementSelect && this.tasksPlacementSelectModal) {
+            this.tasksPlacementSelectModal.value = this.tasksPlacementSelect.value || 'modal';
+        }
+    }
+    hideTasksModal() {
+        if (!this.tasksModal) return;
+        this.tasksModal.style.display = 'none';
+    }
+
+    toggleTasksModalFullscreen() {
+        if (!this.tasksModal) return;
+        const modal = this.tasksModal.querySelector('.modal');
+        if (!modal) return;
+        const isFull = modal.classList.toggle('modal-fullscreen');
+        if (this.tasksModalResizeButton) {
+            this.tasksModalResizeButton.innerHTML = isFull ? '<i class="fas fa-compress"></i>' : '<i class="fas fa-expand"></i>';
+        }
+    }
+
+    syncTasksPlacementFromModal() {
+        if (!this.tasksPlacementSelectModal) return;
+        const value = this.tasksPlacementSelectModal.value;
+        if (this.tasksPlacementSelect) this.tasksPlacementSelect.value = value;
+        if (value === 'modal') {
+            this.showTasksModal();
+        } else {
+            // Закрываем модалку и применяем позиционирование секции
+            this.hideTasksModal();
+            this.tasksSection.style.display = 'block';
+            this.renderTasksWeek(false);
+            this.applyTasksPlacement();
+            try { this.tasksSection.scrollIntoView({ behavior: 'smooth', block: value === 'top' ? 'start' : 'end' }); } catch(_) {}
+        }
+        // Сохраним выбор в localStorage
+        try { localStorage.setItem(this.getStorageKey('productivityTasksPlacement'), value); } catch(_) {}
     }
 
     // Открытие модалки разбивки для общей свечи
@@ -145,7 +411,19 @@ class ProductivityTracker {
         this.signUpButton = document.getElementById('signUpButton');
         this.authEmailInput = document.getElementById('authEmail');
         this.authPasswordInput = document.getElementById('authPassword');
-        this.layoutToggleButton = document.getElementById('layoutToggleButton');
+        this.layoutToggleButton = null;
+        // Tasks UI
+        this.openTasksButton = document.getElementById('openTasksButton');
+        this.tasksSection = document.getElementById('tasksSection');
+        this.tasksWeekGrid = document.getElementById('tasksWeekGrid');
+        this.directionsSectionEl = document.querySelector('.directions-section');
+        this.tasksPlacementSelect = document.getElementById('tasksPlacementSelect');
+        this.tasksModal = document.getElementById('tasksModal');
+        this.tasksModalGrid = document.getElementById('tasksModalGrid');
+        this.closeTasksModal = document.getElementById('closeTasksModal');
+        this.closeTasksModalFooter = document.getElementById('closeTasksModalFooter');
+        this.tasksPlacementSelectModal = document.getElementById('tasksPlacementSelectModal');
+        this.tasksModalResizeButton = document.getElementById('tasksModalResizeButton');
         this.addCategoryButton = document.getElementById('addCategoryButton');
         this.openTrashButton = document.getElementById('openTrashButton');
         this.trashModal = document.getElementById('trashModal');
@@ -257,6 +535,23 @@ class ProductivityTracker {
         this.zoomInButton.addEventListener('click', () => this.zoomIn());
         this.zoomOutButton.addEventListener('click', () => this.zoomOut());
         this.resetZoomButton.addEventListener('click', () => this.resetZoom());
+
+        // Открыть/закрыть ежедневные задания
+        if (this.openTasksButton) {
+            this.openTasksButton.addEventListener('click', () => this.toggleTasksSection());
+        }
+        if (this.tasksPlacementSelect) {
+            this.tasksPlacementSelect.addEventListener('change', () => this.onTasksPlacementChange());
+        }
+        if (this.closeTasksModal) this.closeTasksModal.addEventListener('click', () => this.hideTasksModal());
+        if (this.closeTasksModalFooter) this.closeTasksModalFooter.addEventListener('click', () => this.hideTasksModal());
+        if (this.tasksPlacementSelectModal) {
+            this.tasksPlacementSelectModal.addEventListener('change', () => this.syncTasksPlacementFromModal());
+        }
+        if (this.tasksModalResizeButton) {
+            this.tasksModalResizeButton.addEventListener('click', () => this.toggleTasksModalFullscreen());
+        }
+        // Recent vertical — удалено
         
         // Обработчики событий для навигации
         this.navLeftButton.addEventListener('click', () => this.navigateLeft());
@@ -325,21 +620,7 @@ class ProductivityTracker {
         if (this.calcResultPercentInput) this.calcResultPercentInput.addEventListener('input', updatePreview);
         if (this.calcApplyButton) this.calcApplyButton.addEventListener('click', () => this.applyCalcToCurrentDirection());
 
-        // Переключение вида
-        if (this.layoutToggleButton) {
-            const updateIcon = () => {
-                this.layoutToggleButton.innerHTML = this.layoutMode === 'horizontal'
-                    ? '<i class="fas fa-list"></i>'
-                    : '<i class="fas fa-grip"></i>';
-            };
-            updateIcon();
-            this.layoutToggleButton.addEventListener('click', () => {
-                this.layoutMode = this.layoutMode === 'horizontal' ? 'compact' : 'horizontal';
-                this.saveLayoutMode();
-                this.applyLayoutClass();
-                updateIcon();
-            });
-        }
+        // Кнопки переключения вида удалены — теперь используем раздел задач
 
         // Добавление категории
         if (this.addCategoryButton) {
@@ -385,11 +666,20 @@ class ProductivityTracker {
                 this.currentUser = user || null;
                 this.updateAuthUI();
                 if (this.currentUser) {
+                    // Новый вход: очищаем локальные данные и загружаем строго данные аккаунта
+                    this.clearAllLocalData();
+                    this.resetInMemoryStateToDefaults();
+                    this.startCloudListener();
                     try {
                         await this.loadFromCloud();
                     } catch (e) {
                         console.error('Load from cloud failed:', e);
                     }
+                } else {
+                    // Выход: отключаем слушатели и сбрасываем локальные данные
+                    this.stopCloudListener();
+                    this.clearAllLocalData();
+                    this.resetInMemoryStateToDefaults();
                 }
             });
         } catch (e) {
@@ -481,6 +771,7 @@ class ProductivityTracker {
         return {
             version: '1.1',
             updatedAt: new Date().toISOString(),
+            lastUpdatedBy: this.instanceId,
             productivityData: {
                 directions: this.directions,
                 categories: this.categories,
@@ -494,6 +785,7 @@ class ProductivityTracker {
 
     scheduleCloudSave(delayMs = 800) {
         if (!this.currentUser || !this.firebase.db) return;
+        if (this.isApplyingRemote) return; // не инициируем сохранение во время применения удалённых данных
         if (this.cloudSaveTimer) clearTimeout(this.cloudSaveTimer);
         this.cloudSaveTimer = setTimeout(() => this.saveToCloud().catch(()=>{}), delayMs);
     }
@@ -514,16 +806,22 @@ class ProductivityTracker {
         if (!ref) return;
         const snap = await ref.get();
         if (!snap.exists) {
-            // Нечего грузить — зальём текущие локальные данные
-            await this.saveToCloud();
+            // У аккаунта пока нет данных — оставим пустое локально, не загружаем и не заливаем ничто
             return;
         }
         const data = snap.data();
         const payload = data && data.productivityData;
         if (!payload) return;
-        const wantReplace = confirm('Найденны облачные данные. Заменить локальные данными из облака? (Отмена — сохранить локальные в облако)');
-        if (wantReplace) {
-            this.directions = Array.isArray(payload.directions) ? payload.directions : [];
+        // Всегда используем данные аккаунта без подтверждений и без перезаписи облака локальными
+        this.applyCloudPayload(payload, /*showToast*/true);
+    }
+
+    // Применение облачных данных без подтверждения (для realtime)
+    applyCloudPayload(payload, showToast = false) {
+        if (!payload) return;
+        this.isApplyingRemote = true;
+        try {
+            this.directions = Array.isArray(payload.directions) ? payload.directions : this.directions || [];
             this.categories = Array.isArray(payload.categories) && payload.categories.length ? payload.categories : (this.categories || []);
             this.trash = payload.trash && typeof payload.trash === 'object' ? payload.trash : (this.trash || { directions: [], categories: [] });
             if (payload.comments && typeof payload.comments === 'object') {
@@ -538,19 +836,82 @@ class ProductivityTracker {
                 if (this.candlesCountSelect) this.candlesCountSelect.value = String(payload.zoomState.visibleCandlesCount);
             }
             // Обновляем UI
-            this.saveDirections();
+            this.saveDirections(); // Триггерит scheduleCloudSave, но мы не хотим обратно перезаписывать сервер сразу
             this.saveCategories();
             this.saveTrash();
             this.render();
-            this.updateDetailCategorySelectIfOpen();
-            this.updateDirectionSelect();
-            this.updateChart();
+            this.updateDetailCategorySelectIfOpen?.();
+            this.updateDirectionSelect?.();
+            this.updateChart?.();
             this.updateOverallChart?.();
-            this.showNotification('Данные загружены из облака', 'success');
-        } else {
-            // Пользователь предпочёл оставить локальные — синхронизируем в облако
-            await this.saveToCloud();
+            if (showToast) this.showNotification('Данные загружены из облака', 'success');
+        } finally {
+            // Небольшая задержка, чтобы отложенные save* не стартовали немедленно
+            setTimeout(() => { this.isApplyingRemote = false; }, 100);
         }
+    }
+
+    // Полная очистка локального хранилища приложения
+    clearAllLocalData() {
+        const suffixes = [
+            'productivityDirections',
+            'productivityCategories',
+            'productivityTrash',
+            'productivityComments',
+            'productivityTasks',
+            'productivityTasksPlacement'
+        ];
+        const uid = (this.currentUser && this.currentUser.uid) ? this.currentUser.uid : 'guest';
+        for (const s of suffixes) {
+            try { localStorage.removeItem(`${s}:${uid}`); } catch(_) {}
+        }
+        // layoutMode оставим, т.к. это предпочтение интерфейса, но при желании можно очистить:
+        // try { localStorage.removeItem('productivityLayoutMode'); } catch(_) {}
+    }
+
+    // Сброс всех in-memory структур к дефолтным пустым
+    resetInMemoryStateToDefaults() {
+        this.directions = [];
+        this.categories = [
+            { id: 'daily100', name: '100% ежедневно!', icon: '🔥', priority: 1 },
+            { id: 'daily80', name: '80% ежедневно!', icon: '⚡', priority: 2 },
+            { id: 'daily50', name: '50% ежедневно!', icon: '📈', priority: 3 },
+            { id: 'other1', name: 'Прочее 1', icon: '📝', priority: 4 },
+            { id: 'other2', name: 'Прочее 2', icon: '📋', priority: 5 },
+            { id: 'other3', name: 'Прочее 3', icon: '📊', priority: 6 },
+            { id: 'other4', name: 'Прочее 4', icon: '📌', priority: 7 }
+        ];
+        this.trash = { directions: [], categories: [] };
+        this.tasks = {};
+        this.render();
+        this.updateChart?.();
+        this.updateOverallChart?.();
+    }
+
+    // Подписка на изменения в Firestore для мгновенной синхронизации
+    startCloudListener() {
+        if (!this.firebase.db || !this.currentUser) return;
+        const ref = this.getCloudDocRef();
+        if (!ref) return;
+        this.stopCloudListener();
+        this.cloudUnsubscribe = ref.onSnapshot((doc) => {
+            if (!doc.exists) return;
+            const data = doc.data();
+            if (!data) return;
+            // Больше не игнорируем «свои» изменения, всегда применяем серверное состояние
+            const payload = data.productivityData;
+            if (!payload) return;
+            this.applyCloudPayload(payload, /*showToast*/false);
+        }, (error) => {
+            console.error('Cloud listener error:', error);
+        });
+    }
+
+    stopCloudListener() {
+        if (typeof this.cloudUnsubscribe === 'function') {
+            try { this.cloudUnsubscribe(); } catch(_) {}
+        }
+        this.cloudUnsubscribe = null;
     }
 
     // Получение и сохранение настроек начисления
@@ -657,7 +1018,7 @@ class ProductivityTracker {
 
     // Загрузка направлений из LocalStorage
     loadDirections() {
-        const saved = localStorage.getItem('productivityDirections');
+        const saved = localStorage.getItem(this.getStorageKey('productivityDirections'));
         const directions = saved ? JSON.parse(saved) : [];
         
         // Миграция старых данных - добавляем поля scores, totalScore, category и description если их нет
@@ -674,14 +1035,14 @@ class ProductivityTracker {
     // Категории: хранение
     loadCategories() {
         try {
-            const saved = localStorage.getItem('productivityCategories');
+            const saved = localStorage.getItem(this.getStorageKey('productivityCategories'));
             return saved ? JSON.parse(saved) : null;
         } catch (_) { return null; }
     }
 
     saveCategories() {
-        try { localStorage.setItem('productivityCategories', JSON.stringify(this.categories)); } catch (_) {}
-        this.scheduleCloudSave();
+        try { localStorage.setItem(this.getStorageKey('productivityCategories'), JSON.stringify(this.categories)); } catch (_) {}
+        if (this.currentUser) this.scheduleCloudSave();
     }
 
     // Если нет ни одной категории — создаём fallback. Если удалён fallback, создаём новый
@@ -795,8 +1156,9 @@ class ProductivityTracker {
 
     // Сохранение направлений в LocalStorage
     saveDirections() {
-        localStorage.setItem('productivityDirections', JSON.stringify(this.directions));
-        this.scheduleCloudSave();
+        localStorage.setItem(this.getStorageKey('productivityDirections'), JSON.stringify(this.directions));
+        // Не отправляем в облако, если нет текущего пользователя (чтобы гость не перезаписывал ничьи данные)
+        if (this.currentUser) this.scheduleCloudSave();
     }
 
     // Добавление нового направления
@@ -1243,11 +1605,11 @@ class ProductivityTracker {
         return `${dirId}|${period}|${ts}`;
     }
     loadComments() {
-        try { return JSON.parse(localStorage.getItem('productivityComments') || '{}'); } catch(_) { return {}; }
+        try { return JSON.parse(localStorage.getItem(this.getStorageKey('productivityComments')) || '{}'); } catch(_) { return {}; }
     }
     saveComments(map) {
-        try { localStorage.setItem('productivityComments', JSON.stringify(map)); } catch(_) {}
-        this.scheduleCloudSave();
+        try { localStorage.setItem(this.getStorageKey('productivityComments'), JSON.stringify(map)); } catch(_) {}
+        if (this.currentUser) this.scheduleCloudSave();
     }
     getCandleComment(key) {
         const map = this.loadComments();
@@ -2929,8 +3291,8 @@ class ProductivityTracker {
         try { return JSON.parse(localStorage.getItem('productivityTrash') || '{"directions":[],"categories":[]}'); } catch(_) { return { directions: [], categories: [] }; }
     }
     saveTrash() {
-        try { localStorage.setItem('productivityTrash', JSON.stringify(this.trash)); } catch(_) {}
-        this.scheduleCloudSave();
+        try { localStorage.setItem(this.getStorageKey('productivityTrash'), JSON.stringify(this.trash)); } catch(_) {}
+        if (this.currentUser) this.scheduleCloudSave();
     }
     addToTrash(entry) {
         if (!this.trash) this.trash = { directions: [], categories: [] };

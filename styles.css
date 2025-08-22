@@ -1064,6 +1064,88 @@ body {
     font-size: 0.9rem;
 }
 
+/* === Ежедневные задания === */
+.tasks-section {
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 20px;
+    margin-top: 20px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25);
+}
+
+.tasks-week-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+}
+
+.tasks-day {
+    background: rgba(17, 24, 39, 0.7);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tasks-day-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.tasks-day-title {
+    font-weight: 700;
+    color: #e5e7eb;
+    font-size: 0.95rem;
+}
+
+.tasks-add-btn {
+    background: rgba(17, 24, 39, 0.8);
+    color: #93c5fd;
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.tasks-add-btn:hover { background: rgba(17,24,39,0.95); }
+
+.tasks-list { display: flex; flex-direction: column; gap: 6px; }
+
+.task-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 8px 10px;
+}
+
+.task-text { color: #e5e7eb; font-size: 0.9rem; }
+.task-actions { display: flex; gap: 6px; }
+.task-btn { border: none; border-radius: 8px; padding: 6px 8px; cursor: pointer; color: #fff; }
+.task-btn.done { background: linear-gradient(45deg, #10b981, #059669); }
+.task-btn.fail { background: linear-gradient(45deg, #ef4444, #dc2626); }
+.task-btn.pending { background: linear-gradient(45deg, #2563eb, #1d4ed8); }
+.task-btn.delete { background: rgba(255,255,255,0.12); color:#e5e7eb; }
+.task-btn.delete:hover { background: rgba(255,255,255,0.18); }
+
+/* Цвета статусов карточки */
+.task-pending { box-shadow: inset 0 0 0 2px rgba(250, 204, 21, 0.6); }
+.task-done { background: rgba(16, 185, 129, 0.15); box-shadow: inset 0 0 0 2px rgba(16,185,129,0.35); }
+.task-failed { background: rgba(239, 68, 68, 0.15); box-shadow: inset 0 0 0 2px rgba(239,68,68,0.35); }
+
+@media (max-width: 1024px) {
+    .tasks-week-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 640px) {
+    .tasks-week-grid { grid-template-columns: 1fr; }
+}
+
 /* Modal (Корзина) */
 .modal-backdrop {
     position: fixed;
@@ -1142,6 +1224,17 @@ i.fas.fa-target::before { content: "🎯"; }
 i.fas.fa-plus::before { content: "+"; }
 i.fas.fa-save::before { content: "💾"; }
 i.fas.fa-undo::before { content: "↩️"; }
+i.fas.fa-check::before { content: "✔️"; }
+i.fas.fa-tasks::before { content: "🗒️"; }
+i.fas.fa-calendar-week::before { content: "📅"; }
+i.fas.fa-expand::before { content: "⛶"; }
+i.fas.fa-compress::before { content: "🗗"; }
+
+/* Fullscreen modal variant */
+.modal.modal-fullscreen {
+    width: 96vw;
+    max-height: 92vh;
+}
 
 /* Анимации */
 @keyframes slideIn {
